@@ -1,0 +1,1 @@
+{'task': 'task_hzey_stage1_aonly_bm', 'split': 'test', 'save_dir': './eval_results/EVAL_hzey_stage1_aonly_bm_clam_sb_r50_eval', 'models_dir': 'results/hzey_stage1_aonly_bm_clam_sb_r50_s1', 'model_type': 'clam_sb', 'drop_out': 0.25, 'model_size': 'small'}

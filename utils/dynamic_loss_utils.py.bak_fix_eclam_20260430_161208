@@ -1,0 +1,58 @@
+"""Dynamic instance-loss weighting utilities for ECLAM."""
+
+from __future__ import annotations
+
+import math
+from typing import Optional, Tuple
+
+
+def _default_lambda(base_bag_weight: float) -> float:
+    if not 0.0 < float(base_bag_weight) <= 1.0:
+        raise ValueError("base_bag_weight must be in (0, 1]")
+    return (1.0 - float(base_bag_weight)) / float(base_bag_weight)
+
+
+def get_instance_weight(
+    epoch: int,
+    max_epochs: int,
+    mode: str,
+    base_bag_weight: float,
+    lambda_max: Optional[float],
+    warmup_epochs: int,
+    gamma: float = 10.0,
+    attn_sep: Optional[float] = None,
+    sep_min: float = 0.05,
+    sep_max: float = 0.30,
+    return_effective_weights: bool = False,
+) -> float | Tuple[float, float, float]:
+    if lambda_max is None:
+        lambda_max = _default_lambda(base_bag_weight)
+    lambda_max = float(lambda_max)
+    epoch = max(int(epoch), 0)
+    max_epochs = max(int(max_epochs), 1)
+    warmup_epochs = max(int(warmup_epochs), 1)
+
+    if mode == "constant":
+        lambda_inst = _default_lambda(base_bag_weight)
+    elif mode == "linear_warmup":
+        lambda_inst = lambda_max * min(float(epoch) / float(warmup_epochs), 1.0)
+    elif mode == "sigmoid_warmup":
+        progress = float(epoch) / float(max_epochs)
+        center = float(warmup_epochs) / float(max_epochs)
+        lambda_inst = lambda_max / (1.0 + math.exp(-float(gamma) * (progress - center)))
+    elif mode == "attention_separation":
+        if attn_sep is None:
+            lambda_inst = lambda_max * min(float(epoch) / float(warmup_epochs), 1.0)
+        else:
+            denom = max(float(sep_max) - float(sep_min), 1e-12)
+            sep_norm = min(max((float(attn_sep) - float(sep_min)) / denom, 0.0), 1.0)
+            lambda_inst = lambda_max * sep_norm
+    else:
+        raise ValueError("Unsupported dynamic instance weight mode")
+
+    lambda_inst = max(float(lambda_inst), 0.0)
+    if not return_effective_weights:
+        return lambda_inst
+    effective_bag_weight = 1.0 / (1.0 + lambda_inst)
+    effective_inst_weight = lambda_inst / (1.0 + lambda_inst)
+    return lambda_inst, effective_bag_weight, effective_inst_weight

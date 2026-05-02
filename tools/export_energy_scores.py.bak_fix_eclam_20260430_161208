@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+from typing import Iterable, Tuple
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+
+from dataset_modules.dataset_generic import Generic_MIL_Dataset
+from models.model_eclam import EnergyCLAM_SB
+from utils.energy_utils import compute_active_score
+from utils.utils import get_split_loader
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def build_dataset(args):
+    if args.task == "task_hzey_quick_bm":
+        return 2, Generic_MIL_Dataset(
+            csv_path="dataset_csv/hzey_quick_done_dataset.csv",
+            data_dir=os.path.join(args.data_root_dir, "hzey_sdpc_resnet50"),
+            shuffle=False,
+            seed=args.seed,
+            print_info=True,
+            label_dict={"benign": 0, "malignant": 1},
+            label_col="label",
+            ignore=[],
+        )
+    if args.task == "task_hzey_stage1_aonly_bm":
+        return 2, Generic_MIL_Dataset(
+            csv_path="dataset_csv/hzey_stage1_aonly_bm.csv",
+            data_dir=os.path.join(args.data_root_dir, "hzey_sdpc_resnet50"),
+            shuffle=False,
+            seed=args.seed,
+            print_info=True,
+            label_dict={"benign": 0, "malignant": 1},
+            label_col="label",
+            ignore=[],
+        )
+    raise NotImplementedError(f"Unsupported task for energy export: {args.task}")
+
+
+def resolve_split_csv(split_dir: str, fold: int) -> str:
+    split_path = Path(split_dir)
+    if split_path.is_file():
+        return str(split_path)
+    csv_path = split_path / f"splits_{fold}.csv"
+    if csv_path.exists():
+        return str(csv_path)
+    alt_path = Path("splits") / split_path / f"splits_{fold}.csv"
+    if alt_path.exists():
+        return str(alt_path)
+    raise FileNotFoundError(f"Cannot find split CSV for fold={fold} under {split_dir}")
+
+
+def build_model(args, n_classes: int) -> EnergyCLAM_SB:
+    model = EnergyCLAM_SB(
+        dropout=args.drop_out,
+        n_classes=n_classes,
+        embed_dim=args.embed_dim,
+        size_arg=args.model_size,
+        k_sample=args.B,
+        instance_loss_fn=nn.CrossEntropyLoss(),
+        energy_enable=True,
+        energy_temperature=args.temperature,
+    )
+    ckpt = torch.load(args.ckpt_path, map_location="cpu")
+    missing, unexpected = model.load_state_dict(ckpt, strict=False)
+    if missing:
+        print("[WARN] Missing keys:", missing)
+    if unexpected:
+        print("[WARN] Unexpected keys:", unexpected)
+    return model.to(DEVICE).eval()
+
+
+def iter_named_splits(args, dataset) -> Iterable[Tuple[str, object]]:
+    split_csv = resolve_split_csv(args.split_dir, args.fold)
+    train_dataset, val_dataset, test_dataset = dataset.return_splits(from_id=False, csv_path=split_csv)
+    mapping = {"train": train_dataset, "val": val_dataset, "test": test_dataset}
+    if args.which_split == "all":
+        for name in ["train", "val", "test"]:
+            yield name, mapping[name]
+    else:
+        yield args.which_split, mapping[args.which_split]
+
+
+def tensor_scalar(x) -> float:
+    if torch.is_tensor(x):
+        return float(x.detach().cpu().view(-1)[0].item())
+    return float(np.asarray(x).reshape(-1)[0])
+
+
+def export_scores(args):
+    n_classes, dataset = build_dataset(args)
+    model = build_model(args, n_classes)
+    rows = []
+    for split_name, split_dataset in iter_named_splits(args, dataset):
+        loader = get_split_loader(split_dataset, testing=False)
+        slide_ids = split_dataset.slide_data["slide_id"]
+        for batch_idx, (data, label) in enumerate(loader):
+            data, label = data.to(DEVICE), label.to(DEVICE)
+            slide_id = slide_ids.iloc[batch_idx]
+            with torch.inference_mode():
+                logits, Y_prob, Y_hat, _, rd = model(
+                    data,
+                    label=label,
+                    instance_eval=False,
+                    return_energy=True,
+                    energy_temperature=args.temperature,
+                )
+            probs = Y_prob.detach().cpu().view(-1).numpy()
+            energy = tensor_scalar(rd["energy"])
+            entropy = tensor_scalar(rd["entropy"])
+            margin = tensor_scalar(rd["margin"])
+            confidence = tensor_scalar(rd["confidence"])
+            rows.append({
+                "split": split_name,
+                "slide_id": slide_id,
+                "label": int(label.detach().cpu().item()),
+                "pred": int(Y_hat.detach().cpu().view(-1)[0].item()),
+                "prob_benign": float(probs[0]) if len(probs) > 0 else np.nan,
+                "prob_malignant": float(probs[1]) if len(probs) > 1 else np.nan,
+                "confidence": confidence,
+                "entropy": entropy,
+                "margin": margin,
+                "energy": energy,
+                "active_score_energy": tensor_scalar(compute_active_score(np.array([energy]), mode="energy")),
+                "active_score_energy_entropy": tensor_scalar(compute_active_score(np.array([energy]), entropy=np.array([entropy]), mode="energy_entropy")),
+                "active_score_energy_low_margin": tensor_scalar(compute_active_score(np.array([energy]), margin=np.array([margin]), mode="energy_low_margin")),
+            })
+    out_df = pd.DataFrame(rows)
+    Path(args.save_dir).mkdir(parents=True, exist_ok=True)
+    save_path = Path(args.save_dir) / f"energy_scores_split_{args.fold}.csv"
+    out_df.to_csv(save_path, index=False)
+    print(f"Saved {len(out_df)} rows to {save_path}")
+    if out_df[["energy", "entropy", "confidence", "margin"]].isna().any().any():
+        raise RuntimeError("NaN detected in exported uncertainty columns")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser("Export slide-level ECLAM energy / uncertainty scores")
+    parser.add_argument("--data_root_dir", type=str, required=True)
+    parser.add_argument("--split_dir", type=str, required=True)
+    parser.add_argument("--results_dir", type=str, default="results")
+    parser.add_argument("--ckpt_path", type=str, required=True)
+    parser.add_argument("--task", type=str, default="task_hzey_quick_bm")
+    parser.add_argument("--model_type", type=str, default="eclam_sb", choices=["eclam_sb"])
+    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--save_dir", type=str, required=True)
+    parser.add_argument("--fold", type=int, default=0)
+    parser.add_argument("--which_split", type=str, default="all", choices=["train", "val", "test", "all"])
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--embed_dim", type=int, default=1024)
+    parser.add_argument("--drop_out", type=float, default=0.25)
+    parser.add_argument("--model_size", type=str, default="small", choices=["small", "big"])
+    parser.add_argument("--B", type=int, default=8)
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    export_scores(parse_args())

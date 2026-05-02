@@ -1,0 +1,86 @@
+"""Dynamic instance-loss weighting utilities for ECLAM.
+
+Important loss-scale convention
+-------------------------------
+Original CLAM uses:
+    total_loss = bag_weight * bag_loss + (1 - bag_weight) * instance_loss
+
+ECLAM uses a relative instance weight lambda(t), but must preserve the original
+CLAM loss scale:
+    total_loss = bag_weight * (bag_loss + lambda(t) * instance_loss)
+
+When bag_weight=0.7 and lambda(t)=0.3/0.7=0.4286, this exactly recovers:
+    total_loss = 0.7 * bag_loss + 0.3 * instance_loss
+
+Therefore get_instance_weight returns lambda(t), not the final weighted
+coefficient on instance_loss. The train loop is responsible for multiplying the
+whole bracket by bag_weight.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Optional
+
+
+def default_lambda_from_bag_weight(base_bag_weight: float) -> float:
+    """Return lambda_max = (1 - bag_weight) / bag_weight."""
+    if not 0.0 < float(base_bag_weight) <= 1.0:
+        raise ValueError("base_bag_weight must be in (0, 1]")
+    return (1.0 - float(base_bag_weight)) / float(base_bag_weight)
+
+
+def get_instance_weight(
+    epoch: int,
+    max_epochs: int,
+    mode: str,
+    base_bag_weight: float,
+    lambda_max: Optional[float],
+    warmup_epochs: int,
+    gamma: float = 10.0,
+    attn_sep: Optional[float] = None,
+    sep_min: float = 0.05,
+    sep_max: float = 0.30,
+) -> float:
+    """Return lambda(t), the instance-loss weight relative to bag loss.
+
+    mode='constant' returns the original CLAM-equivalent relative weight:
+        lambda(t) = (1 - bag_weight) / bag_weight
+
+    For warmup modes:
+        lambda(t) = schedule(t) * inst_lambda_max
+
+    The final training loss must be:
+        bag_weight * (bag_loss + lambda(t) * instance_loss)
+    """
+    if lambda_max is None:
+        lambda_max = default_lambda_from_bag_weight(base_bag_weight)
+    lambda_max = float(lambda_max)
+    epoch = max(int(epoch), 0)
+    max_epochs = max(int(max_epochs), 1)
+    warmup_epochs = max(int(warmup_epochs), 1)
+
+    if mode == "constant":
+        lambda_inst = default_lambda_from_bag_weight(base_bag_weight)
+    elif mode == "linear_warmup":
+        schedule = min(float(epoch) / float(warmup_epochs), 1.0)
+        lambda_inst = schedule * lambda_max
+    elif mode == "sigmoid_warmup":
+        progress = float(epoch) / float(max_epochs)
+        center = float(warmup_epochs) / float(max_epochs)
+        schedule = 1.0 / (1.0 + math.exp(-float(gamma) * (progress - center)))
+        lambda_inst = schedule * lambda_max
+    elif mode == "attention_separation":
+        if attn_sep is None:
+            schedule = min(float(epoch) / float(warmup_epochs), 1.0)
+        else:
+            denom = max(float(sep_max) - float(sep_min), 1e-12)
+            schedule = min(max((float(attn_sep) - float(sep_min)) / denom, 0.0), 1.0)
+        lambda_inst = schedule * lambda_max
+    else:
+        raise ValueError(
+            "Unsupported dynamic instance weight mode: {}. Expected one of: "
+            "constant, linear_warmup, sigmoid_warmup, attention_separation".format(mode)
+        )
+
+    return max(float(lambda_inst), 0.0)
