@@ -1,0 +1,205 @@
+# ECLAM-SB 使用说明：HZ-EY Stage1 A-only BM
+
+## 目录约定
+
+如果采用隔离副本方案：
+
+- 原始 baseline 在 `/data/xuewz/WSI_PRE/CLAM_0423/code/CLAM` 运行；
+- ECLAM 新方法在 `/data/xuewz/WSI_PRE/CLAM_0423/code/CLAM_ECLAM` 运行。
+
+如果你已经把 ECLAM 补丁打在 `code/CLAM`，则下面 ECLAM 命令里的 `CLAM_ECLAM` 按你的实际目录改成 `CLAM`。为保护 baseline，推荐使用 `CLAM_ECLAM`。
+
+## Loss 权重定义
+
+原始 CLAM loss：
+
+```text
+total_loss = bag_weight * bag_loss + (1 - bag_weight) * instance_loss
+```
+
+当 `bag_weight=0.7`：
+
+```text
+total_loss = 0.7 * bag_loss + 0.3 * instance_loss
+```
+
+ECLAM 中 `inst_lambda_max` 表示 instance loss 相对于 bag loss 的最大相对权重：
+
+```text
+lambda_max = (1 - bag_weight) / bag_weight
+```
+
+当 `bag_weight=0.7`：
+
+```text
+lambda_max = 0.3 / 0.7 = 0.4286
+```
+
+为了严格保持原始 CLAM 的整体 loss 尺度，动态 loss 写成：
+
+```text
+total_loss = bag_weight * (bag_loss + lambda(t) * instance_loss)
+lambda(t) = schedule(t) * inst_lambda_max
+```
+
+当 `schedule(t)=1` 时，恢复原始 CLAM loss。
+
+## 1. 原始 baseline 命令
+
+```bash
+cd /data/xuewz/WSI_PRE/CLAM_0423/code/CLAM
+conda activate clam_latest
+
+export CUDA_VISIBLE_DEVICES=0
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+export NUMEXPR_NUM_THREADS=4
+
+python main.py \
+  --task task_hzey_stage1_aonly_bm \
+  --data_root_dir /data/xuewz/WSI_PRE/CLAM_0423/data/features \
+  --model_type clam_sb \
+  --inst_loss svm \
+  --bag_loss ce \
+  --B 8 \
+  --bag_weight 0.7 \
+  --max_epochs 200 \
+  --k 5 \
+  --exp_code BASE_CLAM_SB_R50 \
+  --drop_out 0.25 \
+  --early_stopping \
+  --lr 2e-4 \
+  --weighted_sample \
+  --log_data \
+  --embed_dim 1024
+```
+
+## 2. eclam_sb constant 等价检查
+
+```bash
+cd /data/xuewz/WSI_PRE/CLAM_0423/code/CLAM_ECLAM
+conda activate clam_latest
+
+export CUDA_VISIBLE_DEVICES=0
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+export NUMEXPR_NUM_THREADS=4
+
+python main.py \
+  --task task_hzey_stage1_aonly_bm \
+  --data_root_dir /data/xuewz/WSI_PRE/CLAM_0423/data/features \
+  --model_type eclam_sb \
+  --inst_loss svm \
+  --bag_loss ce \
+  --B 8 \
+  --bag_weight 0.7 \
+  --dynamic_inst_weight constant \
+  --energy_enable \
+  --energy_temperature 1.0 \
+  --max_epochs 200 \
+  --k 5 \
+  --exp_code ECLAM_CONSTANT_CHECK \
+  --drop_out 0.25 \
+  --early_stopping \
+  --lr 2e-4 \
+  --weighted_sample \
+  --log_data \
+  --embed_dim 1024
+```
+
+## 3. eclam_sb linear warmup
+
+```bash
+cd /data/xuewz/WSI_PRE/CLAM_0423/code/CLAM_ECLAM
+conda activate clam_latest
+
+export CUDA_VISIBLE_DEVICES=0
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+export NUMEXPR_NUM_THREADS=4
+
+python main.py \
+  --task task_hzey_stage1_aonly_bm \
+  --data_root_dir /data/xuewz/WSI_PRE/CLAM_0423/data/features \
+  --model_type eclam_sb \
+  --inst_loss svm \
+  --bag_loss ce \
+  --B 8 \
+  --bag_weight 0.7 \
+  --dynamic_inst_weight linear_warmup \
+  --inst_lambda_max 0.43 \
+  --inst_warmup_epochs 30 \
+  --energy_enable \
+  --energy_temperature 1.0 \
+  --max_epochs 200 \
+  --k 5 \
+  --exp_code ECLAM_LINEAR_WARMUP \
+  --drop_out 0.25 \
+  --early_stopping \
+  --lr 2e-4 \
+  --weighted_sample \
+  --log_data \
+  --embed_dim 1024
+```
+
+## 4. eclam_sb sigmoid warmup
+
+```bash
+cd /data/xuewz/WSI_PRE/CLAM_0423/code/CLAM_ECLAM
+conda activate clam_latest
+
+export CUDA_VISIBLE_DEVICES=0
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+export NUMEXPR_NUM_THREADS=4
+
+python main.py \
+  --task task_hzey_stage1_aonly_bm \
+  --data_root_dir /data/xuewz/WSI_PRE/CLAM_0423/data/features \
+  --model_type eclam_sb \
+  --inst_loss svm \
+  --bag_loss ce \
+  --B 8 \
+  --bag_weight 0.7 \
+  --dynamic_inst_weight sigmoid_warmup \
+  --inst_lambda_max 0.43 \
+  --inst_warmup_epochs 30 \
+  --energy_enable \
+  --energy_temperature 1.0 \
+  --max_epochs 200 \
+  --k 5 \
+  --exp_code ECLAM_SIGMOID_WARMUP \
+  --drop_out 0.25 \
+  --early_stopping \
+  --lr 2e-4 \
+  --weighted_sample \
+  --log_data \
+  --embed_dim 1024
+```
+
+## 5. Energy score 导出
+
+```bash
+cd /data/xuewz/WSI_PRE/CLAM_0423/code/CLAM_ECLAM
+conda activate clam_latest
+
+export CUDA_VISIBLE_DEVICES=0
+
+python tools/export_energy_scores.py \
+  --task task_hzey_stage1_aonly_bm \
+  --data_root_dir /data/xuewz/WSI_PRE/CLAM_0423/data/features \
+  --split_dir splits/task_hzey_stage1_aonly_bm_100 \
+  --ckpt_path results/ECLAM_LINEAR_WARMUP_s1/s_0_checkpoint.pt \
+  --model_type eclam_sb \
+  --temperature 1.0 \
+  --save_dir eval_results/ECLAM_LINEAR_WARMUP_energy \
+  --fold 0 \
+  --embed_dim 1024 \
+  --inst_loss svm
+```
+
+导出脚本真实参数以以下命令为准：
+
+```bash
+python tools/export_energy_scores.py -h
+```

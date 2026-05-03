@@ -1,0 +1,52 @@
+exp_arguments:
+  n_classes: 2
+  save_exp_code: REP_CASE_SIGMOID_ATTENTION_TOP1
+  raw_save_dir: heatmaps/results
+  production_save_dir: heatmaps/results
+  batch_size: 256
+data_arguments:
+  data_dir: /data/xuewz/WSI_PRE/CLAM_0423/data/raw/formal_sdpc_flat
+  data_dir_key: source
+  process_list: representative_case_heatmap_process_list_TOP1.csv
+  preset: presets/bwh_biopsy.csv
+  slide_ext: .sdpc
+  label_dict:
+    LUAD: 0
+    LSCC: 1
+patching_arguments:
+  patch_size: 256
+  overlap: 0.5
+  patch_level: 0
+  custom_downsample: 1
+encoder_arguments:
+  model_name: resnet50_trunc
+  target_img_size: 224
+model_arguments:
+  ckpt_path: /data/xuewz/WSI_PRE/CLAM_0423/code/CLAM_ECLAM/results/hzey_stage1_aonly_bm_eclam_sb_sigmoid_warmup_s1/s_0_checkpoint.pt
+  model_type: clam_sb
+  initiate_fn: initiate_model
+  model_size: small
+  drop_out: 0.25
+  embed_dim: 1024
+heatmap_arguments:
+  vis_level: -1
+  alpha: 0.4
+  blank_canvas: false
+  save_orig: true
+  save_ext: jpg
+  use_ref_scores: true
+  blur: false
+  use_center_shift: true
+  use_roi: false
+  calc_heatmap: true
+  binarize: false
+  binary_thresh: -1
+  custom_downsample: 1
+  cmap: jet
+sample_arguments:
+  samples:
+  - name: topk_high_attention
+    sample: false
+    seed: 1
+    k: 5
+    mode: topk

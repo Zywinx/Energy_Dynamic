@@ -1,0 +1,3 @@
+,train,val,test
+benign,49,6,6
+malignant,30,4,4

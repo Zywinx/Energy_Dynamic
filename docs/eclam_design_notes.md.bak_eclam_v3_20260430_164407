@@ -1,0 +1,63 @@
+# ECLAM-SB 设计记录
+
+## Baseline
+
+CLAM-SB + instance-level clustering。
+
+## 改进 1：slide-level energy uncertainty
+
+```text
+E(S) = -T log sum_c exp(f_c(S) / T)
+```
+
+Energy 来自 slide-level logits，用于评估模型对已知 benign/malignant 类别的整体兼容程度。
+
+## 改进 2：dynamic instance loss
+
+原始 CLAM：
+
+```text
+L = bag_weight * L_slide + (1 - bag_weight) * L_inst
+```
+
+当 `bag_weight=0.7`：
+
+```text
+L = 0.7 * L_slide + 0.3 * L_inst
+```
+
+ECLAM 中 `inst_lambda_max` 定义为 instance loss 相对于 bag loss 的最大相对权重：
+
+```text
+lambda_max = (1 - bag_weight) / bag_weight
+```
+
+动态 loss 必须保持原始 CLAM 的整体 loss 尺度：
+
+```text
+L = bag_weight * (L_slide + lambda(t) * L_inst)
+lambda(t) = schedule(t) * inst_lambda_max
+```
+
+当 `schedule(t)=1` 且 `bag_weight=0.7` 时：
+
+```text
+lambda(t) = 0.3 / 0.7 = 0.4286
+L = 0.7 * (L_slide + 0.4286 * L_inst)
+  = 0.7 * L_slide + 0.3 * L_inst
+```
+
+因此 `constant` 是严格等价检查，不仅保持 bag/instance 相对比例，也保持整体梯度尺度。
+
+## 为什么不做 unknown 三分类
+
+当前没有真实 unknown slide label 或 patch label。low-attention patch 不等价于 unknown，只能称为 weak negative evidence 或 non-diagnostic candidate。当前版本只做 slide-level energy，不做 patch-level unknown classifier。
+
+## 当前可发表性定位
+
+这是 reliability-aware CLAM extension：
+
+- 保留 CLAM 弱监督定位能力；
+- 用 energy 评估 slide-level 可信度；
+- 用 dynamic instance loss 降低早期 noisy pseudo-label 的干扰；
+- 可作为主动学习候选病例排序基础。

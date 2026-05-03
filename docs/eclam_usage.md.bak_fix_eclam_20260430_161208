@@ -1,0 +1,94 @@
+# ECLAM-SB 使用说明
+
+本扩展只在显式指定 `--model_type eclam_sb` 时启用；原始 `clam_sb`、`clam_mb`、`mil` baseline 不应改变。
+
+## Baseline
+
+```bash
+python main.py \
+  --task task_hzey_quick_bm \
+  --data_root_dir /data/zhangsj/hzey_data \
+  --model_type clam_sb \
+  --inst_loss ce \
+  --bag_loss ce \
+  --B 8 \
+  --bag_weight 0.7 \
+  --max_epochs 200 \
+  --k 5 \
+  --exp_code BASE_CLAM_SB_R50
+```
+
+## ECLAM constant 等价检查
+
+```bash
+python main.py \
+  --task task_hzey_quick_bm \
+  --data_root_dir /data/zhangsj/hzey_data \
+  --model_type eclam_sb \
+  --inst_loss ce \
+  --bag_loss ce \
+  --B 8 \
+  --bag_weight 0.7 \
+  --dynamic_inst_weight constant \
+  --energy_enable \
+  --energy_temperature 1.0 \
+  --max_epochs 200 \
+  --k 5 \
+  --exp_code ECLAM_CONSTANT_CHECK
+```
+
+## ECLAM linear warmup
+
+```bash
+python main.py \
+  --task task_hzey_quick_bm \
+  --data_root_dir /data/zhangsj/hzey_data \
+  --model_type eclam_sb \
+  --inst_loss ce \
+  --bag_loss ce \
+  --B 8 \
+  --bag_weight 0.7 \
+  --dynamic_inst_weight linear_warmup \
+  --inst_lambda_max 0.43 \
+  --inst_warmup_epochs 30 \
+  --energy_enable \
+  --energy_temperature 1.0 \
+  --max_epochs 200 \
+  --k 5 \
+  --exp_code ECLAM_LINEAR_WARMUP
+```
+
+## ECLAM sigmoid warmup
+
+```bash
+python main.py \
+  --task task_hzey_quick_bm \
+  --data_root_dir /data/zhangsj/hzey_data \
+  --model_type eclam_sb \
+  --inst_loss ce \
+  --bag_loss ce \
+  --B 8 \
+  --bag_weight 0.7 \
+  --dynamic_inst_weight sigmoid_warmup \
+  --inst_lambda_max 0.43 \
+  --inst_warmup_epochs 30 \
+  --energy_enable \
+  --energy_temperature 1.0 \
+  --max_epochs 200 \
+  --k 5 \
+  --exp_code ECLAM_SIGMOID_WARMUP
+```
+
+## Energy 导出
+
+```bash
+python tools/export_energy_scores.py \
+  --task task_hzey_quick_bm \
+  --data_root_dir /data/zhangsj/hzey_data \
+  --split_dir splits/task_hzey_quick_bm_100 \
+  --ckpt_path results/ECLAM_LINEAR_WARMUP_s1/s_0_checkpoint.pt \
+  --model_type eclam_sb \
+  --temperature 1.0 \
+  --save_dir eval_results/ECLAM_LINEAR_WARMUP_energy \
+  --fold 0
+```
